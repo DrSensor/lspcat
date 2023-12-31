@@ -1,0 +1,3 @@
+[package]
+name = "lspcat"
+edition = "2021"
