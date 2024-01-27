@@ -4,6 +4,8 @@ use tower_lsp::jsonrpc::{self, ErrorCode};
 pub enum Error {
     Forbidden,
     FileNotOpen,
+    ParseError,
+    NoResponse,
 }
 
 impl From<Error> for jsonrpc::Error {
@@ -23,6 +25,16 @@ impl Error {
             Error::FileNotOpen => jsonrpc::Error {
                 code: jsonrpc::ErrorCode::ServerError(-32900),
                 message: "File not yet open".into(),
+                data,
+            },
+            Error::ParseError => jsonrpc::Error {
+                code: ErrorCode::ParseError,
+                message: ErrorCode::ParseError.description().into(),
+                data,
+            },
+            Error::NoResponse => jsonrpc::Error {
+                code: ErrorCode::ServerError(-32944),
+                message: "No response".into(),
                 data,
             },
         }
