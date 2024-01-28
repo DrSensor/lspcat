@@ -1,8 +1,7 @@
-use std::fmt::{Debug, UpperExp};
-
 use smol::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 use smol::stream::StreamExt;
 use smol::{fs::File, io};
+use std::fmt::Debug;
 use tower_lsp::lsp_types::{MessageType, Range, TextDocumentContentChangeEvent};
 use tower_lsp::Client;
 
@@ -12,6 +11,17 @@ pub enum State {
     Delete(usize, usize),
     Insert(usize, String),
     Replace(usize, String),
+}
+
+pub enum ErrorKind {
+    NotSorted,
+    IO(io::ErrorKind),
+}
+
+impl From<io::Error> for ErrorKind {
+    fn from(err: io::Error) -> Self {
+        Self::IO(err.kind())
+    }
 }
 
 impl State {
@@ -32,6 +42,14 @@ impl State {
             (_, true) => State::Delete(start, length),
             (0, false) => State::Insert(start, text),
             (_, false) => State::Replace(start, text),
+        }
+    }
+
+    pub fn offset(&self) -> usize {
+        match *self {
+            Self::Delete(offset, _) => offset,
+            Self::Insert(offset, _) => offset,
+            Self::Replace(offset, _) => offset,
         }
     }
 }
@@ -62,11 +80,14 @@ where
     ) -> impl Iterator<Item = State>;
 
     /// Apply the changes of multiple edit `State` to this file.
-    async fn apply_all(
-        &mut self,
-        states: impl IntoIterator<Item = State>,
-        client: &Client,
-    ) -> io::Result<()>;
+    ///
+    /// # Error
+    /// - when states not sorted by `offset` as key
+    /// - [File I/O](smol::io::ErrorKind) specific errors
+    ///
+    /// # WARNING
+    /// file will still be written partially when error happen
+    async fn apply_all(&mut self, states: Vec<State>, client: &Client) -> Result<(), ErrorKind>;
 
     /// Apply the changes from [`lsp_types::DidChangeTextDocumentParams.content_changes`] to this file.
     async fn apply_all_changes(
@@ -74,14 +95,23 @@ where
         changes: Vec<TextDocumentContentChangeEvent>,
         client: &Client,
     ) -> io::Result<()> {
-        let states: Vec<_> = self.iter_states(changes, client).await.collect();
+        let mut states: Vec<_> = self.iter_states(changes, client).await.collect();
         client
             .log_message(MessageType::LOG, format!("{:?}", states))
             .await;
         self.seek(SeekFrom::Start(0)).await?;
-        self.apply_all(states, client).await // WARNING: refactoring `State<'a>::_(_, String)`
-                                             // from `String` into `&'a str` or `Cow<'a, str>`
-                                             // will make borrow-checker in here **angry**
+        states.sort_unstable_by_key(State::offset);
+
+        // WARNING: refactoring `State<'a>::_(_, String)`
+        // from `String` into `&'a str` or `Cow<'a, str>`
+        // will make borrow-checker in here **angry**
+        if let Err(err) = self.apply_all(states, client).await {
+            return match err {
+                ErrorKind::IO(err) => Err(err.into()),
+                _ => Ok(()),
+            };
+        }
+        Ok(())
     }
 }
 
@@ -169,7 +199,8 @@ impl FileExt for File {
         lines // TODO: replace with `scan`
             .for_each(|(loc, line)| {
                 if let Ok(line) = line {
-                    let pos = changes.iter().position(|(range, text)| {
+                    // FIX(#1)
+                    for (i, (range, text)) in changes.clone().into_iter().enumerate() {
                         if loc == range.start.line as usize {
                             offset.push((current_offset + range.start.character as usize, None))
                         }
@@ -179,14 +210,36 @@ impl FileExt for File {
                                     current_offset + range.end.character as usize,
                                     text.to_string(),
                                 ));
-                                return true; // swap_remove(pos) to optimize iteration
+                                if i < changes.len() {
+                                    changes.swap_remove(i); // optimize iteration
+                                }
                             }
                         }
-                        false
-                    });
-                    if let Some(pos) = pos {
-                        changes.swap_remove(pos);
                     }
+
+                    // BUG(#1): it only take 1 when there is 2 edit operation in 1 line
+                    // let positions = changes.iter().enumerate().filter_map(|(i, (range, text))| {
+                    //     if loc == range.start.line as usize {
+                    //         offset.push((current_offset + range.start.character as usize, None))
+                    //     }
+                    //     if loc == range.end.line as usize {
+                    //         if let Some((_, end @ None)) = offset.last_mut() {
+                    //             end.get_or_insert((
+                    //                 current_offset + range.end.character as usize,
+                    //                 text.to_string(),
+                    //             ));
+                    //             return Some(i); // swap_remove(pos) to optimize iteration
+                    //         }
+                    //     }
+                    //     None
+                    // });
+                    // for pos in positions {
+                    //     changes.swap_remove(pos);
+                    // }
+                    // if let Some(pos) = pos {
+                    //     changes.swap_remove(pos);
+                    // }
+
                     current_offset += line.len() + 1;
                 }
             })
@@ -214,14 +267,17 @@ impl FileExt for File {
 
     async fn apply_all<'a>(
         &'a mut self,
-        states: impl IntoIterator<Item = State>,
+        states: Vec<State>,
         client: &Client,
-    ) -> io::Result<()> {
+    ) -> Result<(), ErrorKind> {
         let ref mut result = Vec::new(); // TODO: limit buffer to 4K
         let mut last_offset = 0;
         for state in states {
             match state {
                 State::Delete(offset, length) => {
+                    if last_offset > offset {
+                        return Err(ErrorKind::NotSorted);
+                    }
                     let ref mut buf = vec![0; offset - last_offset];
                     self.read_exact(buf).await?;
                     result.append(buf);
@@ -231,6 +287,9 @@ impl FileExt for File {
                     last_offset += length;
                 }
                 State::Insert(offset, text) => {
+                    if last_offset > offset {
+                        return Err(ErrorKind::NotSorted);
+                    }
                     let ref mut buf = vec![0; offset - last_offset];
                     self.read_exact(buf).await?;
                     result.append(buf);
@@ -239,6 +298,9 @@ impl FileExt for File {
                     result.append(&mut text.as_bytes().to_vec());
                 }
                 State::Replace(offset, text) => {
+                    if last_offset > offset {
+                        return Err(ErrorKind::NotSorted);
+                    }
                     let ref mut buf = vec![0; offset - last_offset];
                     self.read_exact(buf).await?;
                     result.append(buf);
@@ -251,7 +313,7 @@ impl FileExt for File {
                 }
             }
         }
-        write_final(result, self).await
+        write_final(result, self).await.map_err(ErrorKind::from)
     }
 }
 
