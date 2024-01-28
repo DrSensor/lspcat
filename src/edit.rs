@@ -225,26 +225,29 @@ impl FileExt for File {
                     let ref mut buf = vec![0; offset - last_offset];
                     self.read_exact(buf).await?;
                     result.append(buf);
-                    self.seek(SeekFrom::Current(length as i64)).await?;
                     last_offset = offset;
-                    client
-                        .log_message(MessageType::LOG, format!("{:?}", result))
-                        .await;
+
+                    self.seek(SeekFrom::Current(length as i64)).await?;
+                    last_offset += length;
                 }
                 State::Insert(offset, text) => {
                     let ref mut buf = vec![0; offset - last_offset];
                     self.read_exact(buf).await?;
                     result.append(buf);
-                    result.append(&mut text.as_bytes().to_vec());
                     last_offset = offset;
+
+                    result.append(&mut text.as_bytes().to_vec());
                 }
                 State::Replace(offset, text) => {
                     let ref mut buf = vec![0; offset - last_offset];
                     self.read_exact(buf).await?;
                     result.append(buf);
-                    result.append(&mut text.as_bytes().to_vec());
-                    self.seek(SeekFrom::Current(text.len() as i64 - 1)).await?;
                     last_offset = offset;
+
+                    result.append(&mut text.as_bytes().to_vec());
+
+                    self.seek(SeekFrom::Current(text.len() as i64)).await?;
+                    last_offset += text.len();
                 }
             }
         }
