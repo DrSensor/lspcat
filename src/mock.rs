@@ -1,1 +1,1 @@
-mod rescript;
+pub mod rescript;

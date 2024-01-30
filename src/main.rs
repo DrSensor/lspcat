@@ -11,4 +11,17 @@ use error::Error;
 struct Content {
 }
 
-fn main() {}
+fn main() {
+    use smol::Unblock;
+    use std::io::{stdin, stdout};
+    use tower_lsp::{LspService, Server};
+
+    let (service, socket) = LspService::new(mock::rescript::backend);
+
+    let stdin = Unblock::new(stdin());
+    let stdout = Unblock::new(stdout());
+
+    smol::block_on(async move {
+        Server::new(stdin, stdout, socket).serve(service).await;
+    })
+}
