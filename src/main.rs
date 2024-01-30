@@ -11,6 +11,10 @@ use error::Error;
 struct Content {
 }
 
+struct Config {
+    incremental_changes: bool,
+}
+
 fn main() {
     use smol::Unblock;
     use std::io::{stdin, stdout};
