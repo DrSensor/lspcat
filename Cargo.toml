@@ -5,3 +5,4 @@ edition = "2021"
 [dependencies]
 tower-lsp = "*"
 serde_json = "*"
+smol = "*"
