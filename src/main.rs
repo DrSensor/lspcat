@@ -209,11 +209,7 @@ impl LanguageServer for Backend {
         // }
 
         // Less I/O operations
-        if let Err(err) = tmp
-            .file
-            .apply_all_changes(params.content_changes, &self.client)
-            .await
-        {
+        if let Err(err) = tmp.file.apply_all_changes(params.content_changes).await {
             self.client.log_message(MessageType::ERROR, err).await;
         }
 

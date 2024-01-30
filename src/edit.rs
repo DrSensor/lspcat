@@ -2,8 +2,7 @@ use smol::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekF
 use smol::stream::StreamExt;
 use smol::{fs::File, io};
 use std::fmt::Debug;
-use tower_lsp::lsp_types::{MessageType, Range, TextDocumentContentChangeEvent};
-use tower_lsp::Client;
+use tower_lsp::lsp_types::{Range, TextDocumentContentChangeEvent};
 
 /// Represent the edit state of a content
 #[derive(Debug)]
@@ -73,11 +72,10 @@ where
     }
 
     /// Get multiple edit `State` from [`lsp_types::DidChangeTextDocumentParams.content_changes`].
-    async fn iter_states(
-        &mut self,
-        changes: Vec<TextDocumentContentChangeEvent>,
-        client: &Client,
-    ) -> impl Iterator<Item = State>;
+    async fn iter_states<I>(&mut self, changes: I) -> impl Iterator<Item = State>
+    where
+        I: IntoIterator<Item = TextDocumentContentChangeEvent>,
+        <I as IntoIterator>::IntoIter: Clone;
 
     /// Apply the changes of multiple edit `State` to this file.
     ///
@@ -87,25 +85,23 @@ where
     ///
     /// # WARNING
     /// file will still be written partially when error happen
-    async fn apply_all(&mut self, states: Vec<State>, client: &Client) -> Result<(), ErrorKind>;
+    async fn apply_all(&mut self, states: impl IntoIterator<Item = State>)
+        -> Result<(), ErrorKind>;
 
     /// Apply the changes from [`lsp_types::DidChangeTextDocumentParams.content_changes`] to this file.
-    async fn apply_all_changes(
-        &mut self,
-        changes: Vec<TextDocumentContentChangeEvent>,
-        client: &Client,
-    ) -> io::Result<()> {
-        let mut states: Vec<_> = self.iter_states(changes, client).await.collect();
-        client
-            .log_message(MessageType::LOG, format!("{:?}", states))
-            .await;
+    async fn apply_all_changes<I>(&mut self, changes: I) -> io::Result<()>
+    where
+        I: IntoIterator<Item = TextDocumentContentChangeEvent>,
+        <I as IntoIterator>::IntoIter: Clone,
+    {
+        let mut states: Vec<_> = self.iter_states(changes).await.collect();
         self.seek(SeekFrom::Start(0)).await?;
         states.sort_unstable_by_key(State::offset);
 
         // WARNING: refactoring `State<'a>::_(_, String)`
         // from `String` into `&'a str` or `Cow<'a, str>`
         // will make borrow-checker in here **angry**
-        if let Err(err) = self.apply_all(states, client).await {
+        if let Err(err) = self.apply_all(states).await {
             return match err {
                 ErrorKind::IO(err) => Err(err.into()),
                 _ => Ok(()),
@@ -161,32 +157,22 @@ impl FileExt for File {
         write_final(buf, self).await
     }
 
-    async fn iter_states(
-        &mut self,
-        changes: Vec<TextDocumentContentChangeEvent>,
-        client: &Client,
-    ) -> impl Iterator<Item = State> {
+    async fn iter_states<I>(&mut self, changes: I) -> impl Iterator<Item = State>
+    where
+        I: IntoIterator<Item = TextDocumentContentChangeEvent>,
+        <I as IntoIterator>::IntoIter: Clone,
+    {
         let reader = io::BufReader::new(self);
         let changes = changes
             .into_iter()
             .filter_map(|diff| diff.range.map(|range| (range, diff.text)));
 
-        client
-            .log_message(MessageType::LOG, format!("{:?}", changes))
-            .await;
-
         let lines = {
             let max_line = changes
-                // .by_ref()
                 .clone()
                 .map(|(range, _)| range.end.line)
                 .max()
                 .unwrap_or_default();
-
-            client
-                .log_message(MessageType::LOG, format!("{:?}", max_line))
-                .await;
-
             reader.lines().take(max_line as usize + 1).enumerate()
         };
 
@@ -199,8 +185,7 @@ impl FileExt for File {
         lines // TODO: replace with `scan`
             .for_each(|(loc, line)| {
                 if let Ok(line) = line {
-                    // FIX(#1)
-                    for (i, (range, text)) in changes.clone().into_iter().enumerate() {
+                    for (i, (range, text)) in changes.clone().iter().enumerate() {
                         if loc == range.start.line as usize {
                             offset.push((current_offset + range.start.character as usize, None))
                         }
@@ -216,40 +201,9 @@ impl FileExt for File {
                             }
                         }
                     }
-
-                    // BUG(#1): it only take 1 when there is 2 edit operation in 1 line
-                    // let positions = changes.iter().enumerate().filter_map(|(i, (range, text))| {
-                    //     if loc == range.start.line as usize {
-                    //         offset.push((current_offset + range.start.character as usize, None))
-                    //     }
-                    //     if loc == range.end.line as usize {
-                    //         if let Some((_, end @ None)) = offset.last_mut() {
-                    //             end.get_or_insert((
-                    //                 current_offset + range.end.character as usize,
-                    //                 text.to_string(),
-                    //             ));
-                    //             return Some(i); // swap_remove(pos) to optimize iteration
-                    //         }
-                    //     }
-                    //     None
-                    // });
-                    // for pos in positions {
-                    //     changes.swap_remove(pos);
-                    // }
-                    // if let Some(pos) = pos {
-                    //     changes.swap_remove(pos);
-                    // }
-
                     current_offset += line.len() + 1;
                 }
             })
-            .await;
-
-        client
-            .log_message(
-                MessageType::LOG,
-                format!("{:?} {:?} {:?}", current_offset, offset, changes),
-            )
             .await;
 
         offset
@@ -267,8 +221,7 @@ impl FileExt for File {
 
     async fn apply_all<'a>(
         &'a mut self,
-        states: Vec<State>,
-        client: &Client,
+        states: impl IntoIterator<Item = State>,
     ) -> Result<(), ErrorKind> {
         let ref mut result = Vec::new(); // TODO: limit buffer to 4K
         let mut last_offset = 0;
