@@ -7,8 +7,13 @@ mod proxy;
 use backend::Backend;
 use error::Error;
 
-/// TODO
+use smol::fs::File;
+use std::path::PathBuf;
+
 struct Content {
+    path: PathBuf,
+    file: File,
+    busy: bool,
 }
 
 struct Config {

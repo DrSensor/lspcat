@@ -1,4 +1,6 @@
 use crate::Config;
+use crate::{Config, Content};
+use dashmap::DashMap;
 use smol::{fs, io, lock::OnceCell};
 use std::{env, path::PathBuf};
 use tower_lsp::{jsonrpc, lsp_types as lsp, Client, LanguageServer};
@@ -6,6 +8,7 @@ use tower_lsp::{jsonrpc, lsp_types as lsp, Client, LanguageServer};
 pub struct Backend {
     tempdir: OnceCell<PathBuf>,
     client: Client,
+    files: DashMap<lsp::Url, Content>,
     config: Config,
 }
 
@@ -89,6 +92,47 @@ impl LanguageServer for Backend {
                 format!("edit {} as {}", doc.uri.path(), path.display()),
             )
             .await;
+    }
+
+    async fn did_change(&self, params: lsp::DidChangeTextDocumentParams) {
+        use crate::edit::FileExt as _;
+        use io::{AsyncSeekExt as _, AsyncWriteExt as _, SeekFrom};
+
+        let Some(mut tmp) = self.files.get_mut(&params.text_document.uri) else {
+            return;
+        };
+        if tmp.busy {
+            return;
+        }
+        tmp.busy = true;
+        if let Err(err) = tmp.file.seek(SeekFrom::Start(0)).await {
+            return self.client.log_message(lsp::MessageType::ERROR, err).await;
+        }
+
+        if self.config.incremental_changes {
+            // WARNING: this implementation have more I/O operations
+            // for diff in params.content_changes {
+            //     let Some(range) = diff.range else {
+            //         continue;
+            //     };
+            //     if let Err(err) = tmp.file.apply_change(range, diff.text).await {
+            //         self.client.log_message(MessageType::ERROR, err).await
+            //     }
+            // }
+            // INFO: Less I/O operations
+            if let Err(err) = tmp.file.apply_all_changes(params.content_changes).await {
+                self.client.log_message(lsp::MessageType::ERROR, err).await;
+            }
+        } else if let Some(content) = params.content_changes.first() {
+            if let Err(err) = tmp.file.write_all(content.text.as_bytes()).await {
+                self.client.log_message(lsp::MessageType::ERROR, err).await;
+            }
+        }
+
+        if let Err(err) = tmp.file.sync_data().await {
+            self.client.log_message(lsp::MessageType::ERROR, err).await;
+        }
+        tmp.busy = false;
     }
 
     async fn shutdown(&self) -> jsonrpc::Result<()> {

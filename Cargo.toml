@@ -7,4 +7,5 @@ tower-lsp = { version = "*", features = [
   "runtime-agnostic",
 ], default-features = false }
 serde_json = "*"
+dashmap = "*"
 smol = "*"
