@@ -1,4 +1,6 @@
-use super::{Capabilities, PassThrough};
+use super::{Capabilities, PassThrough, Proxy};
+use crate::{mock, Content};
+use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types as lsp;
 
 pub struct Completion {
@@ -36,3 +38,15 @@ where
     }
 }
 
+impl Proxy for Completion {
+    type Params = lsp::CompletionParams;
+    type Response = lsp::CompletionResponse;
+
+    async fn proxy_response(
+        &self,
+        params: Self::Params,
+        content: &Content,
+    ) -> Result<Option<Self::Response>> {
+        mock::rescript::completion(&self.proxy, params, content).await
+    }
+}

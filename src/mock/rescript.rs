@@ -6,7 +6,7 @@ pub fn backend(client: Client) -> Backend {
 }
 
 pub async fn completion(
-    proxy: proxy::PassThrough,
+    proxy: &proxy::PassThrough,
     params: lsp::CompletionParams,
     content: &Content,
 ) -> jsonrpc::Result<Option<lsp::CompletionResponse>> {
