@@ -5,11 +5,11 @@ use std::{collections::HashMap, env, path::PathBuf};
 use tower_lsp::{jsonrpc, lsp_types as lsp, Client, LanguageServer};
 
 pub struct Backend {
-    tempdir: OnceCell<PathBuf>,
-    client: Client,
-    files: DashMap<lsp::Url, Content>,
-    proxies: HashMap<&'static str, ProxyColletion>, // Map<language-id, Proxy>
-    config: Config,
+    pub tempdir: OnceCell<PathBuf>,
+    pub client: Client,
+    pub files: DashMap<lsp::Url, Content>,
+    pub proxies: HashMap<&'static str, ProxyColletion>, // Map<language-id, Proxy>
+    pub config: Config,
 }
 
 impl Backend {
