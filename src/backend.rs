@@ -1,4 +1,3 @@
-use crate::Config;
 use crate::{Config, Content};
 use dashmap::DashMap;
 use smol::{fs, io, lock::OnceCell};
@@ -51,7 +50,7 @@ impl LanguageServer for Backend {
     }
 
     async fn did_open(&self, params: lsp::DidOpenTextDocumentParams) {
-        use io::AsyncWriteExt;
+        use io::AsyncWriteExt as _;
         use std::path::Path;
 
         let doc = params.text_document;
@@ -136,6 +135,10 @@ impl LanguageServer for Backend {
     }
 
     async fn shutdown(&self) -> jsonrpc::Result<()> {
-        todo!()
+        Ok(if let Some(tempdir) = self.tempdir.get() {
+            if let Err(err) = fs::remove_dir_all(tempdir).await {
+                self.client.log_message(lsp::MessageType::ERROR, err).await;
+            }
+        })
     }
 }
