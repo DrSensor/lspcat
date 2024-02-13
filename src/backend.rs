@@ -15,12 +15,14 @@ impl LanguageServer for Backend {
         &self,
         params: lsp::InitializeParams,
     ) -> jsonrpc::Result<lsp::InitializeResult> {
-        use std::{collections::hash_map::DefaultHasher, hash::Hasher};
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash as _, Hasher as _};
 
         if let Some(pid) = params.process_id {
             let tempdir = {
                 let mut hasher = DefaultHasher::new();
                 let cwd = env::current_dir().expect("need permission");
+                format!("{} {}", pid, cwd.display()).hash(&mut hasher);
                 env::temp_dir().join(format!("lspcat-{}", hasher.finish()))
             };
             let _ = fs::create_dir(&tempdir).await;
