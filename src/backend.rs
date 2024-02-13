@@ -41,8 +41,10 @@ impl LanguageServer for Backend {
         &self,
         params: lsp::InitializeParams,
     ) -> jsonrpc::Result<lsp::InitializeResult> {
+        use crate::proxy::Capabilities as _;
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash as _, Hasher as _};
+        let text_document = params.capabilities.text_document;
 
         if let Some(pid) = params.process_id {
             let tempdir = {
@@ -54,6 +56,11 @@ impl LanguageServer for Backend {
             let _ = fs::create_dir(&tempdir).await;
             self.tempdir.set_blocking(tempdir).expect("must set once"); // WARNING: using async version didn't works
         }
+
+        let completions = self
+            .proxies
+            .values()
+            .map_while(|proxy| proxy.completion.as_ref());
 
         Ok(lsp::InitializeResult {
             capabilities: lsp::ServerCapabilities {
@@ -67,6 +74,8 @@ impl LanguageServer for Backend {
                         ..Default::default()
                     },
                 )),
+                completion_provider: completions
+                    .resolve_provider(text_document.map(|to| to.completion).flatten()),
                 ..Default::default()
             },
             ..Default::default()
