@@ -1,14 +1,38 @@
-use crate::{Config, Content};
+use crate::{Config, Content, ProxyColletion};
 use dashmap::DashMap;
 use smol::{fs, io, lock::OnceCell};
-use std::{env, path::PathBuf};
+use std::{collections::HashMap, env, path::PathBuf};
 use tower_lsp::{jsonrpc, lsp_types as lsp, Client, LanguageServer};
 
 pub struct Backend {
     tempdir: OnceCell<PathBuf>,
     client: Client,
     files: DashMap<lsp::Url, Content>,
+    proxies: HashMap<&'static str, ProxyColletion>, // Map<language-id, Proxy>
     config: Config,
+}
+
+impl Backend {
+    fn get_proxy(
+        &self,
+        text_document: &lsp::TextDocumentIdentifier,
+    ) -> jsonrpc::Result<(
+        &ProxyColletion,
+        dashmap::mapref::one::Ref<lsp::Url, Content>,
+    )> {
+        use crate::Error;
+
+        match self.files.get(&text_document.uri) {
+            Some(content) => match self.proxies.get(content.language_id.as_ref()) {
+                Some(proxy) => Ok((proxy, content)),
+                None => Err(Error::Forbidden.msg(&format!(
+                    "Missing proxy for language-id {}",
+                    content.language_id
+                ))),
+            },
+            None => Err(Error::FileNotOpen.msg(text_document.uri.path())),
+        }
+    }
 }
 
 #[tower_lsp::async_trait]
@@ -132,6 +156,19 @@ impl LanguageServer for Backend {
             self.client.log_message(lsp::MessageType::ERROR, err).await;
         }
         tmp.busy = false;
+    }
+
+    async fn completion(
+        &self,
+        params: lsp::CompletionParams,
+    ) -> jsonrpc::Result<Option<lsp::CompletionResponse>> {
+        use crate::{proxy::Proxy as _, Error};
+
+        let (proxy, content) = self.get_proxy(&params.text_document_position.text_document)?;
+        match &proxy.completion {
+            Some(completion) => completion.proxy_response(params, &content).await,
+            None => Err(Error::Forbidden.msg("Missing proxy for code completion")),
+        }
     }
 
     async fn shutdown(&self) -> jsonrpc::Result<()> {

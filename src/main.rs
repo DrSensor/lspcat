@@ -8,9 +8,15 @@ use backend::Backend;
 use error::Error;
 
 use smol::fs::File;
-use std::path::PathBuf;
+use std::{borrow::Cow, path::PathBuf};
+
+struct ProxyColletion {
+    completion: Option<proxy::Completion>,
+    // ...reserved for other proxies...
+}
 
 struct Content {
+    language_id: Cow<'static, str>,
     path: PathBuf,
     file: File,
     busy: bool,
