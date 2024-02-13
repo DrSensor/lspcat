@@ -3,6 +3,8 @@ name = "lspcat"
 edition = "2021"
 
 [dependencies]
-tower-lsp = "*"
+tower-lsp = { version = "*", features = [
+  "runtime-agnostic",
+], default-features = false }
 serde_json = "*"
 smol = "*"
