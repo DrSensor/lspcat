@@ -1,14 +1,15 @@
-use crate::{Config, Content, ProxyColletion};
+use crate::{Config, Content, ProxyFlags};
 use dashmap::DashMap;
 use smol::{fs, io, lock::OnceCell};
-use std::{collections::HashMap, env, path::PathBuf};
+use std::{env, path::PathBuf};
 use tower_lsp::{jsonrpc, lsp_types as lsp, Client, LanguageServer};
 
 pub struct Backend {
     pub tempdir: OnceCell<PathBuf>,
     pub client: Client,
     pub files: DashMap<lsp::Url, Content>,
-    pub proxies: HashMap<&'static str, ProxyColletion>, // Map<language-id, Proxy>
+    pub lang: &'static str,
+    pub proxy: ProxyFlags,
     pub config: Config,
 }
 
@@ -16,20 +17,18 @@ impl Backend {
     fn get_proxy(
         &self,
         text_document: &lsp::TextDocumentIdentifier,
-    ) -> jsonrpc::Result<(
-        &ProxyColletion,
-        dashmap::mapref::one::Ref<lsp::Url, Content>,
-    )> {
+    ) -> jsonrpc::Result<(&ProxyFlags, dashmap::mapref::one::Ref<lsp::Url, Content>)> {
         use crate::Error;
 
         match self.files.get(&text_document.uri) {
-            Some(content) => match self.proxies.get(content.language_id.as_ref()) {
-                Some(proxy) => Ok((proxy, content)),
-                None => Err(Error::Forbidden.msg(&format!(
-                    "Missing proxy for language-id {}",
-                    content.language_id
-                ))),
-            },
+            Some(content) => Ok((&self.proxy, content)),
+            // Some(content) => match self.proxy.get(content.language_id.as_ref()) {
+            //     Some(proxy) => Ok((proxy, content)),
+            //     None => Err(Error::Forbidden.msg(&format!(
+            //         "Missing proxy for language-id {}",
+            //         content.language_id
+            //     ))),
+            // },
             None => Err(Error::FileNotOpen.msg(text_document.uri.path())),
         }
     }
@@ -57,10 +56,13 @@ impl LanguageServer for Backend {
             self.tempdir.set_blocking(tempdir).expect("must set once"); // WARNING: using async version didn't works
         }
 
-        let completions = self
-            .proxies
-            .values()
-            .map_while(|proxy| proxy.completion.as_ref());
+        // let completions = self
+        //     .proxies
+        //     .values()
+        //     .map_while(|proxy| proxy.completion.as_ref());
+        let completions = vec![self.proxy.completion]
+            .iter()
+            .map_while(|maybe| maybe.as_ref());
 
         Ok(lsp::InitializeResult {
             capabilities: lsp::ServerCapabilities {

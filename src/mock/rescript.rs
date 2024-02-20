@@ -1,4 +1,4 @@
-use crate::{proxy, Backend, Config, Content, Error, ProxyColletion};
+use crate::{proxy, Backend, Config, Content, Error, ProxyFlags};
 use dashmap::DashMap;
 use smol::lock::{OnceCell, RwLock};
 use smol::process::Command;
@@ -6,21 +6,29 @@ use std::collections::HashMap;
 use tower_lsp::{jsonrpc, lsp_types as lsp, Client};
 
 pub fn backend(client: Client) -> Backend {
-    let mut proxies = HashMap::new();
-    let mut rescript_analysis = Command::new("rescript-analysis");
+    // let mut proxies = HashMap::new();
+    let mut rescript_analysis = Command::new("rescript-editor-analysis.exe");
     rescript_analysis.arg("completion");
-    proxies.insert(
-        "rescript",
-        ProxyColletion {
-            completion: Some(proxy::Completion {
-                proxy: proxy::PassThrough::ExecCommand(RwLock::new(rescript_analysis)),
-                trigger_characters: Some(vec![".".to_string(), "(".to_string()]),
-            }),
-        },
-    );
+    let proxy = ProxyFlags {
+        completion: Some(proxy::Completion {
+            proxy: proxy::PassThrough::ExecCommand(RwLock::new(rescript_analysis)),
+            trigger_characters: Some(vec![".".to_string(), "(".to_string()]),
+        }),
+    };
+    // proxies.insert(
+    //     "rescript",
+    //     ProxyFlags {
+    //         completion: Some(proxy::Completion {
+    //             proxy: proxy::PassThrough::ExecCommand(RwLock::new(rescript_analysis)),
+    //             trigger_characters: Some(vec![".".to_string(), "(".to_string()]),
+    //         }),
+    //     },
+    // );
     Backend {
         client,
-        proxies,
+        proxy,
+        // proxies,
+        lang: "rescript",
         tempdir: OnceCell::new(),
         files: DashMap::new(),
         config: Config {

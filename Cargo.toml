@@ -9,3 +9,5 @@ tower-lsp = { version = "*", features = [
 serde_json = "*"
 dashmap = "*"
 smol = "*"
+lexopt = "*"
+const_format = "*"
