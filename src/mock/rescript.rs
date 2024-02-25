@@ -2,38 +2,27 @@ use crate::{proxy, Backend, Config, Content, Error, ProxyFlags};
 use dashmap::DashMap;
 use smol::lock::{OnceCell, RwLock};
 use smol::process::Command;
-use std::collections::HashMap;
 use tower_lsp::{jsonrpc, lsp_types as lsp, Client};
 
 pub fn backend(client: Client) -> Backend {
-    // let mut proxies = HashMap::new();
     let mut rescript_analysis = Command::new("rescript-editor-analysis.exe");
     rescript_analysis.arg("completion");
     let proxy = ProxyFlags {
+        lang: None,
         completion: Some(proxy::Completion {
             proxy: proxy::PassThrough::ExecCommand(RwLock::new(rescript_analysis)),
             trigger_characters: Some(vec![".".to_string(), "(".to_string()]),
         }),
     };
-    // proxies.insert(
-    //     "rescript",
-    //     ProxyFlags {
-    //         completion: Some(proxy::Completion {
-    //             proxy: proxy::PassThrough::ExecCommand(RwLock::new(rescript_analysis)),
-    //             trigger_characters: Some(vec![".".to_string(), "(".to_string()]),
-    //         }),
-    //     },
-    // );
     Backend {
         client,
         proxy,
-        // proxies,
         lang: "rescript",
-        tempdir: OnceCell::new(),
-        files: DashMap::new(),
-        config: Config {
+        config: &Config {
             incremental_changes: true,
         },
+        tempdir: OnceCell::new(),
+        files: DashMap::new(),
     }
 }
 

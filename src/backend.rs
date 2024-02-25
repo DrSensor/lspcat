@@ -10,7 +10,7 @@ pub struct Backend {
     pub files: DashMap<lsp::Url, Content>,
     pub lang: &'static str,
     pub proxy: ProxyFlags,
-    pub config: Config,
+    pub config: &'static Config,
 }
 
 impl Backend {
