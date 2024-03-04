@@ -1,19 +1,19 @@
 use crate::{Config, Content, ProxyFlags};
 use dashmap::DashMap;
 use smol::{fs, io, lock::OnceCell};
-use std::{env, path::PathBuf};
+use std::{env, path::PathBuf, sync::Arc};
 use tower_lsp::{jsonrpc, lsp_types as lsp, Client, LanguageServer};
 
-pub struct Backend {
+pub struct Backend<'a> {
     pub tempdir: OnceCell<PathBuf>,
     pub client: Client,
     pub files: DashMap<lsp::Url, Content>,
-    pub lang: &'static str,
+    pub lang: &'a str,
     pub proxy: ProxyFlags,
-    pub config: &'static Config,
+    pub config: Arc<Config>,
 }
 
-impl Backend {
+impl Backend<'_> {
     fn get_proxy(
         &self,
         text_document: &lsp::TextDocumentIdentifier,
@@ -35,7 +35,7 @@ impl Backend {
 }
 
 #[tower_lsp::async_trait]
-impl LanguageServer for Backend {
+impl LanguageServer for Backend<'static> {
     async fn initialize(
         &self,
         params: lsp::InitializeParams,

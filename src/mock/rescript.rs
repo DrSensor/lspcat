@@ -4,7 +4,7 @@ use smol::lock::{OnceCell, RwLock};
 use smol::process::Command;
 use tower_lsp::{jsonrpc, lsp_types as lsp, Client};
 
-pub fn backend(client: Client) -> Backend {
+pub fn backend(client: Client) -> Backend<'static> {
     let mut rescript_analysis = Command::new("rescript-editor-analysis.exe");
     rescript_analysis.arg("completion");
     let proxy = ProxyFlags {

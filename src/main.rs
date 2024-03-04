@@ -11,7 +11,7 @@ use error::Error;
 
 use const_format::formatcp;
 use smol::{fs::File, lock::OnceCell};
-use std::{borrow::Cow, path::PathBuf};
+use std::{borrow::Cow, ffi::OsString, path::PathBuf};
 
 const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 const HELP: &'static str = formatcp!(
@@ -38,7 +38,7 @@ Config:
 
 #[derive(Default)]
 struct ProxyFlags {
-    lang: Option<&'static str>,
+    lang: Option<String>,
     completion: Option<proxy::Completion>,
     // ...reserved for other proxies...
 }
@@ -50,14 +50,14 @@ struct Content {
     busy: bool,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Config {
     pub incremental_changes: bool,
 }
 
 fn main() {
     use smol::Unblock;
-    use std::io;
+    use std::{io, sync::Arc};
     use tower_lsp::{LspService, Server};
 
     let mut args = std::env::args_os().collect::<Vec<_>>();
@@ -71,22 +71,39 @@ fn main() {
     }
 
     let mut errors = vec![];
-    let mut segments = args.split(|arg| {
+    let mut segments = args.split_inclusive(|arg| {
         arg.to_str()
             .is_some_and(|arg| arg.starts_with('{') && arg.ends_with("}!"))
     });
-    // TODO: segmennts = zip(lang, segment)
 
-    let ref config = match segments.next().map(cli::parse_config) {
-        Some(Err(err)) => {
+    let Some((lang, config)) = segments.next().and_then(|args| args.split_last()) else {
+        return print!("{HELP}");
+    };
+
+    let config = Arc::new(match cli::parse_config(config) {
+        Ok(config) => config,
+        Err(err) => {
             errors.push(err);
             Config::default()
         }
-        Some(Ok(res)) => res,
-        None => return print!("{HELP}"),
-    };
+    });
+    let mut lang = lang
+        .to_string_lossy()
+        .as_ref()
+        .trim_start_matches('{')
+        .trim_end_matches("}!");
 
-    for proxies in segments.map(|segment| segment.split(|arg| arg == "!").map(cli::parse_proxy)) {
+    for (next_lang, proxies) in segments.map_while(|segment| {
+        segment.split_last().map(|(last, segment)| {
+            let mut segment = segment.to_vec();
+            let mut lang = Some(last);
+            if segment.is_empty() {
+                segment.push(last.clone());
+                lang = None;
+            }
+            (lang, segment.split(|arg| arg == "!").map(cli::parse_proxy))
+        })
+    }) {
         let mut prev_stdin = None;
         let mut prev_stdout = None;
 
@@ -124,6 +141,9 @@ fn main() {
 
             prev_stdin = Some(stdin);
             prev_stdout = Some(stdout);
+        }
+        if let Some(next) = next_lang {
+            lang = next.to_string_lossy().as_ref();
         }
     }
 
