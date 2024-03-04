@@ -60,9 +60,6 @@ impl LanguageServer for Backend<'static> {
         //     .proxies
         //     .values()
         //     .map_while(|proxy| proxy.completion.as_ref());
-        let completions = vec![self.proxy.completion]
-            .iter()
-            .map_while(|maybe| maybe.as_ref());
 
         Ok(lsp::InitializeResult {
             capabilities: lsp::ServerCapabilities {
@@ -76,8 +73,8 @@ impl LanguageServer for Backend<'static> {
                         ..Default::default()
                     },
                 )),
-                completion_provider: completions
-                    .resolve_provider(text_document.map(|to| to.completion).flatten()),
+                // completion_provider: completions
+                //     .resolve_provider(text_document.map(|to| to.completion).flatten()),
                 ..Default::default()
             },
             ..Default::default()

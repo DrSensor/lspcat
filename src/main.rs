@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 mod backend;
 mod cli;
 mod edit;
@@ -37,7 +39,7 @@ Config:
 );
 
 #[derive(Default)]
-struct ProxyFlags {
+pub struct ProxyFlags {
     lang: Option<String>,
     completion: Option<proxy::Completion>,
     // ...reserved for other proxies...
@@ -56,8 +58,10 @@ pub struct Config {
 }
 
 fn main() {
+    use smol::io::AsyncReadExt;
+    use smol::stream::StreamExt;
     use smol::Unblock;
-    use std::{io, sync::Arc};
+    use std::{io, rc::Rc, sync::Arc};
     use tower_lsp::{LspService, Server};
 
     let mut args = std::env::args_os().collect::<Vec<_>>();
@@ -80,7 +84,7 @@ fn main() {
         return print!("{HELP}");
     };
 
-    let config = Arc::new(match cli::parse_config(config) {
+    let config = Arc::new(match cli::parse::config(config) {
         Ok(config) => config,
         Err(err) => {
             errors.push(err);
@@ -93,7 +97,7 @@ fn main() {
         .trim_start_matches('{')
         .trim_end_matches("}!");
 
-    for (next_lang, proxies) in segments.map_while(|segment| {
+    /*for (next_lang, proxies) in segments.map_while(|segment| {
         segment.split_last().map(|(last, segment)| {
             let mut segment = segment.to_vec();
             let mut lang = Some(last);
@@ -104,10 +108,7 @@ fn main() {
             (lang, segment.split(|arg| arg == "!").map(cli::parse_proxy))
         })
     }) {
-        let mut prev_stdin = None;
-        let mut prev_stdout = None;
-
-        // TODO(pipe): pipe each stdio here, or
+        let mut prev_stdio = None;
 
         for proxy in proxies {
             let proxy = match proxy {
@@ -121,31 +122,41 @@ fn main() {
             let (service, socket) = LspService::new(|client| Backend {
                 client,
                 proxy,
-                config,
+                config: config.clone(),
                 lang: "",
                 tempdir: OnceCell::new(),
                 files: DashMap::new(),
             });
 
-            let stdin = io::stdin();
-            let stdout = io::stdout();
+            let stdio = Rc::new((io::stdin(), io::stdout()));
 
-            smol::block_on(async {
-                let stdin = Unblock::new(stdin);
-                let stdout = Unblock::new(stdout);
+            // let stdin = Rc::new(io::stdin());
+            // let stdout = Rc::new(io::stdout());
 
-                // TODO(pipe): pipe each stdio here
+            // let stdin = Rc::new(Unblock::new(io::stdin()));
+            // let stdout = Rc::new(Unblock::new(io::stdout()));
 
-                Server::new(stdin, stdout, socket).serve(service).await;
-            });
+            if let Some(prev_stdio) = prev_stdio {
+                smol::spawn(async {
+                    // prev_stdout.chain(stdin);
+                });
+            }
 
-            prev_stdin = Some(stdin);
-            prev_stdout = Some(stdout);
+            if let Some((stdin, stdout)) = Rc::into_inner(stdio.clone()) {
+                smol::spawn(async {
+                    let stdin = Unblock::new(stdin);
+                    let stdout = Unblock::new(stdout);
+                    // Server::new(stdin, stdout, socket).serve(service).await;
+                })
+                .detach();
+            }
+
+            prev_stdio = Some(stdio.clone());
         }
         if let Some(next) = next_lang {
             lang = next.to_string_lossy().as_ref();
         }
-    }
+    }*/
 
     for error in errors {
         println!("{error}");

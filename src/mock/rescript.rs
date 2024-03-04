@@ -2,6 +2,7 @@ use crate::{proxy, Backend, Config, Content, Error, ProxyFlags};
 use dashmap::DashMap;
 use smol::lock::{OnceCell, RwLock};
 use smol::process::Command;
+use std::sync::Arc;
 use tower_lsp::{jsonrpc, lsp_types as lsp, Client};
 
 pub fn backend(client: Client) -> Backend<'static> {
@@ -18,9 +19,9 @@ pub fn backend(client: Client) -> Backend<'static> {
         client,
         proxy,
         lang: "rescript",
-        config: &Config {
+        config: Arc::new(Config {
             incremental_changes: true,
-        },
+        }),
         tempdir: OnceCell::new(),
         files: DashMap::new(),
     }
