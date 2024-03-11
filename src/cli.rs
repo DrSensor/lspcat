@@ -3,8 +3,10 @@ use fauxgen::generator;
 use lexopt::{Arg, Error as ArgError, Parser};
 use smol::{lock::RwLock, process::Command};
 use std::{
-    borrow::Cow,
+    borrow::{Borrow, Cow},
+    cell::{Cell, Ref, RefCell},
     ffi::{OsStr, OsString},
+    ops::IndexMut,
     rc::{self, Rc},
 };
 
@@ -49,7 +51,11 @@ pub enum Error {
 pub fn parse(
     args: &[OsString],
 ) -> Result<
-    Pipeline<impl Iterator<Item = &[OsString]>, impl Iterator<Item = Option<ProxyFlags>>>,
+    Pipeline<
+        impl Iterator<Item = &[OsString]>,
+        // impl Iterator<Item = Result<ProxyFlags, ArgError>>,
+        // impl Iterator<Item = Option<ProxyFlags>>
+    >,
     Error,
 > {
     use std::iter;
@@ -117,7 +123,7 @@ pub fn parse(
     // Ok(())
     Ok(Pipeline {
         segments,
-        segment: iter::empty(),
+        segment: Box::new(iter::empty()),
         config,
         errors,
         lang,
@@ -125,27 +131,40 @@ pub fn parse(
     })
 }
 
-pub struct Pipeline<'a, I, P>
+pub struct Pipeline<'a, I>
 where
     I: Iterator<Item = &'a [OsString]> + 'a,
-    P: Iterator<Item = Option<ProxyFlags>> + 'a,
+    // P: Iterator<Item = Result<ProxyFlags, ArgError>>,
+    // P: Iterator<Item = Option<ProxyFlags>> + 'a,
 {
     pub config: Config,
     segments: I,
-    segment: P,
+    segment: Box<dyn Iterator<Item = Result<ProxyFlags, ArgError>> + 'a>,
+    // segment: Box<dyn Iterator<Item = Result<ProxyFlags, ArgError>> + 'a>,
+    // segment: &'a dyn Iterator<Item = Result<ProxyFlags, ArgError>>,
+    // segment: Box<P>,
     lang: Rc<str>,
     errors: Vec<ArgError>,
 }
 
-impl<'a, I, P> Iterator for Pipeline<'a, I, P>
+impl<'a, I> Iterator for Pipeline<'a, I>
 where
     I: Iterator<Item = &'a [OsString]> + 'a,
-    P: Iterator<Item = Option<ProxyFlags>> + 'a,
+    // P: Iterator<Item = Result<ProxyFlags, ArgError>> + 'a,
+    // P: Iterator<Item = Option<ProxyFlags>> + 'a,
 {
     type Item = (rc::Weak<str>, Option<ProxyFlags>);
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(proxy) = self.segment.next() {
+        let mut errors = |result| match result {
+            Ok(proxy) => Some(proxy),
+            Err(err) => {
+                self.errors.push(err);
+                None
+            }
+        };
+
+        if let Some(proxy) = self.segment.next().map(&mut errors) {
             Some((Rc::downgrade(&self.lang), proxy))
         } else {
             let Some((lang, segment)) = self.segments.next().and_then(|segment| {
@@ -157,19 +176,32 @@ where
                 return None;
             };
             self.lang = lang;
-            let mut segment = segment.map(|result| match result {
-                Ok(proxy) => Some(proxy),
-                Err(err) => {
-                    self.errors.push(err);
-                    None
-                }
-            });
-            if let Some(proxy) = segment.next() {
-                self.segment = segment; // ERROR: mismatch lifetime? 🤔
-                Some((Rc::downgrade(&self.lang), proxy))
-            } else {
-                None
-            }
+            self.segment = Box::new(segment);
+            self.segment
+                .next()
+                .map(errors)
+                .map(|proxy| (Rc::downgrade(&self.lang), proxy))
+
+            // if let Some(proxy) = self.segment.next().map(errors) {
+            //     Some((Rc::downgrade(&self.lang), proxy))
+            // } else {
+            //     None
+            // }
+
+            // let mut segment = segment.map(|result| match result {
+            //     Ok(proxy) => Some(proxy),
+            //     Err(err) => {
+            //         self.errors.push(err);
+            //         None
+            //     }
+            // });
+            // if let Some(proxy) = segment.next() {
+            //     self.segment = Box::new(segment); // ERROR: mismatch lifetime? 🤔
+            //     Some((Rc::downgrade(&self.lang), proxy))
+            // } else {
+            //     None
+            // }
+
             // None
             // match segment.next() {
             //     Some(Ok(proxy)) => {
@@ -185,12 +217,13 @@ where
     }
 }
 
-impl<'a, I, P> Pipeline<'a, I, P>
+impl<'a, I> Pipeline<'a, I>
 where
     I: Iterator<Item = &'a [OsString]> + 'a,
-    P: Iterator<Item = Option<ProxyFlags>> + 'a,
+    // P: Iterator<Item = Result<ProxyFlags, ArgError>> + 'a,
+    // P: Iterator<Item = Option<ProxyFlags>> + 'a,
 {
-    pub fn errors(&'a self) -> &'a [ArgError] {
+    pub fn errors(&self) -> &[ArgError] {
         self.errors.as_slice()
     }
 }

@@ -74,6 +74,19 @@ fn main() {
         return print!("{HELP}");
     }
 
+    // let Ok(mut pipelines) = cli::parse(&args) else {
+    // let Ok(ref mut pipelines) = cli::parse(&args) else {
+    let Ok(ref pipelines) = cli::parse(&args) else {
+        return eprintln!("Missing {{lang}}!");
+    };
+
+    // while let Some((lang, Some(proxy))) = pipelines.next() {} // OK
+
+    for (lang, proxy) in pipelines.filter_map(|(lang, proxy)| proxy.map(|proxy| (lang, proxy))) {} // ERROR
+
+    for error in pipelines.errors() {}
+
+    /*
     let mut errors = vec![];
     let mut segments = args.split_inclusive(|arg| {
         arg.to_str()
@@ -96,6 +109,7 @@ fn main() {
         .as_ref()
         .trim_start_matches('{')
         .trim_end_matches("}!");
+    */
 
     /*for (next_lang, proxies) in segments.map_while(|segment| {
         segment.split_last().map(|(last, segment)| {
@@ -158,7 +172,7 @@ fn main() {
         }
     }*/
 
-    for error in errors {
-        println!("{error}");
-    }
+    // for error in errors {
+    //     println!("{error}");
+    // }
 }
